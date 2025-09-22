@@ -15,6 +15,30 @@ model = slowfast_r50(pretrained=True)
 model = model.eval()
 
 # ============================
+# 1.1. Chỉ dùng một số nhãn (tùy chọn)
+# ============================
+# Điền các nhãn bạn muốn giữ lại tại đây. Để trống = dùng tất cả nhãn.
+# Ví dụ: ["wrestling", "boxing", "punching bag"]
+allowed_labels = [
+    "wrestling", "punching bag", "punching person", "kissing", "hugging", "exercising arm"
+]
+
+if len(allowed_labels) > 0:
+    allowed_indices = []
+    invalid = []
+    for name in allowed_labels:
+        if name in labels:
+            allowed_indices.append(labels.index(name))
+        else:
+            invalid.append(name)
+    if invalid:
+        print(f"⚠️ Các nhãn không tồn tại và sẽ bị bỏ qua: {invalid}")
+    if not allowed_indices:
+        raise ValueError("❌ Không còn nhãn hợp lệ sau khi lọc. Hãy cập nhật 'allowed_labels'.")
+else:
+    allowed_indices = None  # None = dùng tất cả nhãn
+
+# ============================
 # 2. Transform cho frame
 # ============================
 frame_transform = T.Compose([
@@ -28,7 +52,7 @@ frame_transform = T.Compose([
 # ============================
 # 3. Đọc video & lấy frames
 # ============================
-cap = cv2.VideoCapture("video2.mp4")
+cap = cv2.VideoCapture("video1.mp4")
 frames = []
 num_frames = 32  # SlowFast thường dùng 32 hoặc 64 frames
 
@@ -63,9 +87,27 @@ inputs = [slow_pathway, fast_pathway]
 # ============================
 with torch.no_grad():
     outputs = model(inputs)  # (1, num_classes)
-    probs = F.softmax(outputs, dim=1)
-    pred_id = torch.argmax(probs, dim=1).item()
+    probs = F.softmax(outputs, dim=1)[0]  # (num_classes,)
 
-print("Predicted class ID:", pred_id)
-print("Predicted class label:", labels[pred_id])
-print("Confidence:", probs[0][pred_id].item())
+    if allowed_indices is not None:
+        subset_probs = probs[allowed_indices]
+        if subset_probs.numel() == 0:
+            raise ValueError("❌ Không có xác suất nào trong tập nhãn đã lọc.")
+        subset_best_idx = torch.argmax(subset_probs).item()
+        pred_id = allowed_indices[subset_best_idx]
+        pred_label = labels[pred_id]
+        confidence = probs[pred_id].item()
+    else:
+        pred_id = torch.argmax(probs).item()
+        pred_label = labels[pred_id]
+        confidence = probs[pred_id].item()
+
+print("Predicted class:", pred_label, f"(id={pred_id})")
+print("Confidence:", confidence)
+
+if allowed_indices is not None:
+    k = min(5, len(allowed_indices))
+    top_vals, top_idx = torch.topk(subset_probs, k)
+    print("Top-k (trong các nhãn đã lọc):")
+    for v, idx in zip(top_vals.tolist(), top_idx.tolist()):
+        print(f"- {labels[allowed_indices[idx]]}: {v:.4f}")

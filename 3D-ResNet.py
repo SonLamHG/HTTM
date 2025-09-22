@@ -15,6 +15,31 @@ model.eval()
 labels = weights.meta["categories"]
 
 # ============================
+# 1.1. Chỉ dùng một số nhãn (tùy chọn)
+# ============================
+# Hãy điền các nhãn bạn muốn giữ lại trong danh sách dưới đây.
+# Nếu để trống (mặc định), mô hình sẽ dùng tất cả nhãn của bộ weights.
+allowed_labels = [
+    "wrestling", "punching bag", "punching person", "kissing", "hugging", "exercising arm"
+]
+
+# Chuyển tên nhãn -> index trong danh sách gốc
+if len(allowed_labels) > 0:
+    allowed_indices = []
+    invalid = []
+    for name in allowed_labels:
+        if name in labels:
+            allowed_indices.append(labels.index(name))
+        else:
+            invalid.append(name)
+    if invalid:
+        print(f"⚠️ Các nhãn không tồn tại và sẽ bị bỏ qua: {invalid}")
+    if not allowed_indices:
+        raise ValueError("❌ Không còn nhãn hợp lệ sau khi lọc. Hãy cập nhật 'allowed_labels'.")
+else:
+    allowed_indices = None  # None = dùng tất cả nhãn
+
+# ============================
 # 2. Transform cho từng frame
 # ============================
 frame_transform = T.Compose([
@@ -56,11 +81,31 @@ print("Video tensor shape:", video_tensor.shape)
 # ============================
 with torch.no_grad():
     outputs = model(video_tensor)  # (1, num_classes)
-    probs = F.softmax(outputs, dim=1)
-    pred_id = torch.argmax(probs, dim=1).item()
+    probs = F.softmax(outputs, dim=1)[0]  # (num_classes,)
+
+    if allowed_indices is not None:
+        subset_probs = probs[allowed_indices]  # (len(allowed_indices),)
+        if subset_probs.numel() == 0:
+            raise ValueError("❌ Không có xác suất nào trong tập nhãn đã lọc.")
+        subset_best_idx = torch.argmax(subset_probs).item()
+        pred_id = allowed_indices[subset_best_idx]
+        pred_label = labels[pred_id]
+        confidence = probs[pred_id].item()
+    else:
+        pred_id = torch.argmax(probs).item()
+        pred_label = labels[pred_id]
+        confidence = probs[pred_id].item()
 
 # ============================
 # 6. Kết quả
 # ============================
-print("Predicted class:", pred_id)
-print("Confidence:", probs[0][pred_id].item())
+print("Predicted class:", pred_label, f"(id={pred_id})")
+print("Confidence:", confidence)
+
+# In thêm Top-k trong tập nhãn đã lọc (nếu có)
+if allowed_indices is not None:
+    k = min(5, len(allowed_indices))
+    top_vals, top_idx = torch.topk(subset_probs, k)
+    print("Top-k (trong các nhãn đã lọc):")
+    for v, idx in zip(top_vals.tolist(), top_idx.tolist()):
+        print(f"- {labels[allowed_indices[idx]]}: {v:.4f}")
